@@ -2,8 +2,8 @@
 from datetime import datetime, timezone
 
 from backend.services.preprocessing import preprocess
-from backend.services.sentiment import analyze_sentiment
-from backend.services.validation import validate_text
+from backend.services.sentiment import analyze_sentiment, classify_compound
+from backend.services.validation import ValidationError, validate_text
 
 
 def build_report(text) -> dict:
@@ -27,4 +27,41 @@ def build_report(text) -> dict:
         "sentiment": sentiment,
         "preprocessing": processed,
         "summary": summary,
+    }
+def build_csv_report(rows, column: str) -> dict:
+    """Analyze each CSV row; skip bad rows; add an overall summary."""
+    results, skipped = [], []
+
+    for row_number, raw in rows:
+        try:
+            text = validate_text(raw)
+        except ValidationError as exc:
+            skipped.append({"row": row_number, "reason": str(exc)})
+            continue
+        sentiment = analyze_sentiment(text)
+        results.append({"row": row_number, "text": text[:200], **sentiment})
+
+    if not results:
+        raise ValidationError(
+            f"No valid text found in column '{column}'. "
+            "Every row was empty or invalid."
+        )
+
+    average = sum(r["compound"] for r in results) / len(results)
+    counts = {"Positive": 0, "Negative": 0, "Neutral": 0}
+    for r in results:
+        counts[r["label"]] += 1
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "column_used": column,
+        "rows_analyzed": len(results),
+        "rows_skipped": len(skipped),
+        "overall": {
+            "average_compound": round(average, 4),
+            "label": classify_compound(average),
+            "counts": counts,
+        },
+        "results": results,
+        "skipped": skipped,
     }
