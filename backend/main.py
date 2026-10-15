@@ -1,7 +1,10 @@
 """FastAPI app: exposes the sentiment pipeline over HTTP."""
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from sqlalchemy.orm import Session
 
-from backend.schemas import AnalyzeRequest
+from backend.auth.service import register_user
+from backend.db.database import get_db
+from backend.schemas import AnalyzeRequest, RegisterRequest
 from backend.services.file_parser import (
     ALLOWED_EXTENSIONS,
     MAX_FILE_BYTES,
@@ -69,3 +72,13 @@ async def analyze_file(
         }
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/register", status_code=201)
+def register(request: RegisterRequest, db: Session = Depends(get_db)):
+    """Create a new user account."""
+    try:
+        user = register_user(db, request.username, request.email, request.password)
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"id": user.id, "username": user.username, "email": user.email}

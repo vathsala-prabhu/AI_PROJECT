@@ -6,3 +6,9 @@ class AnalyzeRequest(BaseModel):
     # Optional so a missing field gets our friendly validation message
     # instead of a generic framework error.
     text: str | None = None
+
+
+class RegisterRequest(BaseModel):
+    username: str | None = None
+    email: str | None = None
+    password: str | None = None
