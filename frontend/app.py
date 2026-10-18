@@ -6,15 +6,25 @@ import pandas as pd
 import requests
 import streamlit as st
 
+from styles import (
+    auth_panel,
+    eyebrow,
+    inject_css,
+    landing_grids,
+    logo_html,
+    page_header,
+    score_bar,
+)
+
 API_URL = os.getenv("MOODMENTOR_API_URL", "http://127.0.0.1:8000")
 TIMEOUT = 30
-ICONS = {"Positive": "🟢", "Negative": "🔴", "Neutral": "⚪"}
+MIX_COLORS = {"Positive": "#2E9E5B", "Neutral": "#9AA7C7", "Negative": "#E5675B"}
 
 st.set_page_config(
     page_title="MoodMentor",
-    page_icon="🧠",
+    page_icon="💙",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
 
@@ -31,6 +41,14 @@ def log_out():
 def go_to(page):
     """Ask the app to switch page on the next run."""
     st.session_state["goto"] = page
+
+
+def logout_click():
+    log_out()
+    go_to("Home")
+
+
+inject_css(hide_sidebar=not is_logged_in())
 
 
 # ---------- API helpers ----------
@@ -63,18 +81,28 @@ def api_analyze_text(text):
     )
 
 
-def api_history():
-    return requests.get(
-        f"{API_URL}/my/history", headers=auth_headers(), timeout=TIMEOUT
-    )
-
-
 def api_analyze_file(uploaded, column):
     files = {"file": (uploaded.name, uploaded.getvalue(), "application/octet-stream")}
     data = {"column": column} if column else {}
     return requests.post(
-        f"{API_URL}/analyze-file", files=files, data=data, timeout=TIMEOUT
+        f"{API_URL}/my/analyze-file",
+        files=files,
+        data=data,
+        headers=auth_headers(),
+        timeout=TIMEOUT,
     )
+
+
+def api_history():
+    return requests.get(f"{API_URL}/my/history", headers=auth_headers(), timeout=TIMEOUT)
+
+
+def api_overview():
+    return requests.get(f"{API_URL}/my/overview", headers=auth_headers(), timeout=TIMEOUT)
+
+
+def api_me():
+    return requests.get(f"{API_URL}/me", headers=auth_headers(), timeout=TIMEOUT)
 
 
 def call_api(func, *args):
@@ -114,17 +142,19 @@ def call_api(func, *args):
 
 # ---------- Display helpers ----------
 def show_scores(sentiment):
-    st.subheader(f"{ICONS[sentiment['label']]} {sentiment['label']}")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Compound", f"{sentiment['compound']:.3f}")
-    c2.metric("Positive", f"{sentiment['positive']:.3f}")
-    c3.metric("Negative", f"{sentiment['negative']:.3f}")
-    c4.metric("Neutral", f"{sentiment['neutral']:.3f}")
-    chart = pd.DataFrame(
-        {"score": [sentiment["positive"], sentiment["neutral"], sentiment["negative"]]},
-        index=["Positive", "Neutral", "Negative"],
-    )
-    st.bar_chart(chart)
+    with st.container(border=True):
+        eyebrow("Your sentiment snapshot")
+        st.markdown(
+            f'<div class="big-label {sentiment["label"]}">{sentiment["label"]}</div>',
+            unsafe_allow_html=True,
+        )
+        st.caption(f"Compound score {sentiment['compound']:+.3f}")
+        score_bar(sentiment["compound"])
+        st.write("")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Positive", f"{sentiment['positive']:.3f}")
+        c2.metric("Neutral", f"{sentiment['neutral']:.3f}")
+        c3.metric("Negative", f"{sentiment['negative']:.3f}")
 
 
 def show_text_report(report):
@@ -163,21 +193,19 @@ def show_csv_report(data):
     st.success(
         f"Analyzed {data['rows_analyzed']} rows from column "
         f"'{data['column_used']}'. Overall: {overall['label']} "
-        f"(average compound {overall['average_compound']:.3f})."
+        f"(average compound {overall['average_compound']:+.3f})."
     )
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("🟢 Positive", overall["counts"]["Positive"])
-    c2.metric("⚪ Neutral", overall["counts"]["Neutral"])
-    c3.metric("🔴 Negative", overall["counts"]["Negative"])
+    c1.metric("Positive rows", overall["counts"]["Positive"])
+    c2.metric("Neutral rows", overall["counts"]["Neutral"])
+    c3.metric("Negative rows", overall["counts"]["Negative"])
     c4.metric("Skipped rows", data["rows_skipped"])
 
-    st.bar_chart(pd.DataFrame({"rows": overall["counts"]}))
-
-    st.markdown("**Per-row results**")
+    st.markdown("**Score for every row**")
     table = pd.DataFrame(data["results"])[
         ["row", "text", "label", "compound", "positive", "negative", "neutral"]
     ]
-    st.dataframe(table, hide_index=True)
+    st.dataframe(table, hide_index=True, use_container_width=True)
 
     if data["skipped"]:
         with st.expander(f"Skipped rows ({len(data['skipped'])})"):
@@ -191,204 +219,267 @@ def show_csv_report(data):
     )
 
 
-def require_login():
-    """Show a message and return False if the user is not logged in."""
-    if is_logged_in():
-        return True
-    st.warning("Please log in to use this page.")
-    st.button("Go to Login", on_click=go_to, args=("Login",))
-    return False
+# ---------- Public pages ----------
+def topbar():
+    c1, c2, c3 = st.columns([6, 1.2, 1.4])
+    c1.markdown(logo_html(), unsafe_allow_html=True)
+    c2.button("Log in", key="top_login", on_click=go_to, args=("Login",), use_container_width=True)
+    c3.button(
+        "Register", key="top_register", type="primary",
+        on_click=go_to, args=("Register",), use_container_width=True,
+    )
 
 
-# ---------- Pages ----------
 def page_home():
-    st.title("🧠 MoodMentor")
-    st.subheader("AI-powered emotional tone analysis")
-    st.write(
-        "MoodMentor reads your writing and tells you whether its tone is "
-        "positive, negative or neutral, using the VADER sentiment model."
-    )
-
-    if is_logged_in():
-        st.success(f"Welcome back, {st.session_state['user']['username']}!")
-        st.button("Analyze some text", type="primary", on_click=go_to, args=("Analyze Text",))
-    else:
-        c1, c2, _ = st.columns([1, 1, 4])
-        c1.button("Login", key="home_login", type="primary", on_click=go_to, args=("Login",))
-        c2.button("Register", key="home_register", on_click=go_to, args=("Register",))
-
     st.markdown(
-        """
-**What you can do**
-- Create an account and log in
-- Paste text and get a sentiment report, saved to your history
-- Upload a `.txt` file (one report) or a `.csv` file (per-row results and overall summary)
-- See the preprocessing steps: cleaning, tokenization, stop-word removal, lemmatization
-
-**How to read the scores**
-- **Compound** runs from -1 (very negative) to +1 (very positive)
-- Positive if compound ≥ 0.05, Negative if ≤ -0.05, otherwise Neutral
-- Positive, Negative and Neutral show the share of the text in each category
-"""
+        '<div class="headline"><h1>How are you really feeling?</h1>'
+        "<p>Write it down. MoodMentor shows you the tone of your words.</p></div>",
+        unsafe_allow_html=True,
     )
-
-
-def page_register():
-    st.title("Create an account")
-    with st.form("register_form"):
-        username = st.text_input("Username", help="3-30 letters, numbers or underscore")
-        email = st.text_input("Email")
-        password = st.text_input("Password", type="password", help="At least 8 characters")
-        confirm = st.text_input("Confirm password", type="password")
-        submitted = st.form_submit_button("Register", type="primary")
-
-    if submitted:
-        if password != confirm:
-            st.error("Passwords do not match.")
-        elif call_api(api_register, username, email, password):
-            st.session_state["flash"] = "Account created. Please log in."
-            go_to("Login")
-            st.rerun()
-
-    st.button(
-        "Already have an account? Log in",
-        key="register_to_login",
-        on_click=go_to,
-        args=("Login",),
+    landing_grids()
+    st.markdown(
+        '<div class="footnote">For reflection and general wellness only. '
+        "Not a clinical or diagnostic tool.</div>",
+        unsafe_allow_html=True,
     )
 
 
 def page_login():
-    st.title("Log in")
-    flash = st.session_state.pop("flash", None)
-    if flash:
-        st.info(flash)
+    left, right = st.columns(2, gap="large")
+    with left:
+        st.write("")
+        eyebrow("Welcome back")
+        st.markdown('<div class="page-title">Sign in to your space</div>', unsafe_allow_html=True)
+        st.caption("Your entries and scores are waiting.")
+        flash = st.session_state.pop("flash", None)
+        if flash:
+            st.info(flash)
 
-    with st.form("login_form"):
-        username = st.text_input("Username or email")
-        password = st.text_input("Password", type="password")
-        submitted = st.form_submit_button("Log in", type="primary")
+        with st.form("login_form"):
+            username = st.text_input("Username or email")
+            password = st.text_input("Password", type="password")
+            submitted = st.form_submit_button("Sign in →", type="primary", use_container_width=True)
 
-    if submitted:
-        data = call_api(api_login, username, password)
-        if data:
-            st.session_state["token"] = data["access_token"]
-            st.session_state["user"] = data["user"]
-            go_to("Analyze Text")
-            st.rerun()
+        if submitted:
+            data = call_api(api_login, username, password)
+            if data:
+                st.session_state["token"] = data["access_token"]
+                st.session_state["user"] = data["user"]
+                go_to("Overview")
+                st.rerun()
 
-    st.button(
-        "No account yet? Register",
-        key="login_to_register",
-        on_click=go_to,
-        args=("Register",),
-    )
+        st.button("New to MoodMentor? Create account", key="login_to_register",
+                  on_click=go_to, args=("Register",))
+    with right:
+        auth_panel()
 
 
-def page_text():
-    st.title("Analyze Text")
-    if not require_login():
+def page_register():
+    left, right = st.columns(2, gap="large")
+    with left:
+        st.write("")
+        eyebrow("Join MoodMentor")
+        st.markdown('<div class="page-title">Create your account</div>', unsafe_allow_html=True)
+        st.caption("It takes less than a minute.")
+
+        with st.form("register_form"):
+            username = st.text_input("Username", help="3-30 letters, numbers or underscore")
+            email = st.text_input("Email address")
+            password = st.text_input("Password", type="password", help="At least 8 characters")
+            confirm = st.text_input("Confirm password", type="password")
+            submitted = st.form_submit_button("Create account →", type="primary", use_container_width=True)
+
+        if submitted:
+            if password != confirm:
+                st.error("Passwords do not match.")
+            elif call_api(api_register, username, email, password):
+                st.session_state["flash"] = "Account created. Please sign in."
+                go_to("Login")
+                st.rerun()
+
+        st.button("Already have an account? Sign in", key="register_to_login",
+                  on_click=go_to, args=("Login",))
+    with right:
+        auth_panel()
+
+
+# ---------- Logged-in pages ----------
+def page_overview():
+    username = st.session_state["user"]["username"]
+    page_header("Your overview", f"Welcome, {username} 👋",
+                "Make space for your thoughts and see how your writing feels.")
+    data = call_api(api_overview)
+    if data is None:
         return
-    text = st.text_area(
-        "Enter or paste your text",
-        height=200,
-        max_chars=50_000,
-        placeholder="e.g. I am not happy with the results.",
-    )
-    if st.button("Analyze", type="primary"):
-        report = call_api(api_analyze_text, text)
-        if report:
-            st.caption("✅ Saved to your history.")
-            show_text_report(report)
 
+    total = data["total"]
+    counts = data["counts"]
+    avg = data["average_compound"]
+    most_common = max(counts, key=counts.get) if total else "—"
 
-def page_upload():
-    st.title("Upload File")
-    if not require_login():
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Journal entries", total)
+    c2.metric("Average sentiment", "—" if avg is None else f"{avg:+.2f}")
+    c3.metric("Most common tone", most_common)
+    st.write("")
+
+    if total == 0:
+        st.info("No entries yet. Add your first check-in to see your charts.")
+        st.button("＋ New check-in", type="primary", on_click=go_to, args=("Analyze text",))
         return
-    st.caption("Supported: .txt (analyzed as one text) and .csv (one row at a time). Max 2 MB.")
-    uploaded = st.file_uploader("Choose a file", type=["txt", "csv"])
 
-    column = None
-    if uploaded is not None and uploaded.name.lower().endswith(".csv"):
+    left, right = st.columns([3, 2], gap="large")
+    with left:
+        with st.container(border=True):
+            st.markdown("**Your emotional rhythm**")
+            st.caption("Compound score of your latest entries, oldest to newest.")
+            rhythm = pd.DataFrame(
+                {"Compound score": [r["compound"] for r in data["recent"]]},
+                index=range(1, len(data["recent"]) + 1),
+            )
+            st.line_chart(rhythm, height=280)
+    with right:
+        with st.container(border=True):
+            st.markdown("**Your sentiment mix**")
+            st.caption("Share of Positive, Neutral and Negative entries.")
+            mix = pd.DataFrame(
+                [{"label": k, "count": v} for k, v in counts.items() if v > 0]
+            )
+            st.vega_lite_chart(
+                mix,
+                {
+                    "mark": {"type": "arc", "innerRadius": 60},
+                    "encoding": {
+                        "theta": {"field": "count", "type": "quantitative"},
+                        "color": {
+                            "field": "label",
+                            "type": "nominal",
+                            "scale": {
+                                "domain": list(MIX_COLORS),
+                                "range": list(MIX_COLORS.values()),
+                            },
+                            "legend": {"title": None, "orient": "bottom"},
+                        },
+                    },
+                    "height": 260,
+                },
+                use_container_width=True,
+            )
+    st.button("＋ New check-in", type="primary", on_click=go_to, args=("Analyze text",))
+
+
+def page_analyze():
+    page_header("Sentiment analyzer", "How are you feeling today?",
+                "Type your text, or upload a .txt or .csv file.")
+    tab_text, tab_txt, tab_csv = st.tabs(["✍️ Type text", "📄 Upload .txt", "📊 Upload .csv"])
+
+    with tab_text:
+        with st.container(border=True):
+            text = st.text_area(
+                "Your check-in",
+                height=200,
+                max_chars=50_000,
+                placeholder="Today I felt...",
+            )
+            clicked = st.button("Analyze my text", type="primary", key="analyze_text_btn")
+        if clicked:
+            report = call_api(api_analyze_text, text)
+            if report:
+                st.caption("✅ Saved to your journal.")
+                show_text_report(report)
+
+    with tab_txt:
+        uploaded = st.file_uploader("Choose a .txt file", type=["txt"], key="txt_upload")
+        if st.button("Analyze .txt file", type="primary", key="analyze_txt_btn"):
+            if uploaded is None:
+                st.warning("Please choose a file first.")
+            else:
+                data = call_api(api_analyze_file, uploaded, None)
+                if data:
+                    st.caption("✅ Saved to your journal.")
+                    show_text_report(data["report"])
+
+    with tab_csv:
+        st.caption("Every row is scored on its own. Max 2 MB and 500 rows.")
+        uploaded = st.file_uploader("Choose a .csv file", type=["csv"], key="csv_upload")
         column = st.text_input(
-            "CSV column with the text (optional)",
+            "Column with the text (optional)",
             help="Leave blank to auto-detect a column named text, comment, review, etc.",
         ).strip() or None
-
-    if st.button("Analyze file", type="primary"):
-        if uploaded is None:
-            st.warning("Please choose a file first.")
-            return
-        data = call_api(api_analyze_file, uploaded, column)
-        if data:
-            if data["file_type"] == "txt":
-                show_text_report(data["report"])
+        if st.button("Analyze .csv file", type="primary", key="analyze_csv_btn"):
+            if uploaded is None:
+                st.warning("Please choose a file first.")
             else:
-                show_csv_report(data)
+                data = call_api(api_analyze_file, uploaded, column)
+                if data:
+                    st.caption(f"✅ {data['saved_entries']} rows saved to your journal.")
+                    show_csv_report(data)
 
 
-def page_history():
-    st.title("My History")
-    if not require_login():
-        return
+def page_journal():
+    page_header("Your saved entries", "My journal")
     rows = call_api(api_history)
     if rows is None:
         return
     if not rows:
-        st.info("No saved analyses yet. Analyze some text first.")
+        st.info("No saved entries yet. Analyze some text first.")
         return
     table = pd.DataFrame(rows)[
-        ["created_at", "text", "label", "compound", "positive", "negative", "neutral"]
+        ["created_at", "source", "text", "label", "compound", "positive", "negative", "neutral"]
     ]
-    st.dataframe(table, hide_index=True)
+    st.dataframe(table, hide_index=True, use_container_width=True)
 
 
-# ---------- Navigation (top button bar) ----------
+def page_profile():
+    page_header("Your account", "My profile")
+    me = call_api(api_me)
+    if me is None:
+        return
+    with st.container(border=True):
+        st.markdown(f"**Username:** {me['username']}")
+        st.markdown(f"**Email:** {me['email']}")
+    st.write("")
+    st.button("Log out", on_click=logout_click)
+
+
+# ---------- Navigation ----------
 PUBLIC_PAGES = {"Home": page_home, "Login": page_login, "Register": page_register}
 USER_PAGES = {
-    "Home": page_home,
-    "Analyze Text": page_text,
-    "Upload File": page_upload,
-    "My History": page_history,
+    "Overview": page_overview,
+    "Analyze text": page_analyze,
+    "My journal": page_journal,
+    "My profile": page_profile,
 }
-pages = USER_PAGES if is_logged_in() else PUBLIC_PAGES
+NAV_ICONS = {"Overview": "🏠", "Analyze text": "✨", "My journal": "📖", "My profile": "👤"}
 
-# Apply any page switch requested by a button or by code (go_to).
+pages = USER_PAGES if is_logged_in() else PUBLIC_PAGES
+default_page = "Overview" if is_logged_in() else "Home"
+
 if "goto" in st.session_state:
     target = st.session_state.pop("goto")
     if target in pages:
         st.session_state["page"] = target
 if st.session_state.get("page") not in pages:
-    st.session_state["page"] = "Home"
-
-
-def nav_click(name):
-    st.session_state["page"] = name
-
-
-def logout_click():
-    log_out()
-    st.session_state["page"] = "Home"
-
-
+    st.session_state["page"] = default_page
 current = st.session_state["page"]
-extra = 2 if is_logged_in() else 0  # room for the username and Log out
-cols = st.columns(len(pages) + extra)
-
-for col, name in zip(cols, pages):
-    col.button(
-        name,
-        key=f"nav_{name}",
-        on_click=nav_click,
-        args=(name,),
-        type="primary" if name == current else "secondary",
-        use_container_width=True,
-    )
 
 if is_logged_in():
-    cols[-2].caption(f"👤 {st.session_state['user']['username']}")
-    cols[-1].button("Log out", key="nav_logout", on_click=logout_click, use_container_width=True)
+    with st.sidebar:
+        st.markdown(logo_html(), unsafe_allow_html=True)
+        st.markdown('<div class="side-label">YOUR SPACE</div>', unsafe_allow_html=True)
+        for name in USER_PAGES:
+            st.button(
+                f"{NAV_ICONS[name]}   {name}",
+                key=f"nav_{name}",
+                on_click=go_to,
+                args=(name,),
+                type="primary" if name == current else "secondary",
+                use_container_width=True,
+            )
+        st.divider()
+        st.caption(f"Signed in as **{st.session_state['user']['username']}**")
+        st.button("Log out", key="side_logout", on_click=logout_click, use_container_width=True)
+else:
+    topbar()
 
-st.divider()
 pages[current]()
