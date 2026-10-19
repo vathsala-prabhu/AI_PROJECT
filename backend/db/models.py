@@ -20,6 +20,13 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
+    # Profile / journal settings (all optional)
+    full_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    bio: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    journaling_goal: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    journaling_frequency: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    preferred_time: Mapped[str | None] = mapped_column(String(30), nullable=True)
+
     analyses: Mapped[list["Analysis"]] = relationship(back_populates="user")
 
 

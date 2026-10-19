@@ -19,6 +19,8 @@ from styles import (
 API_URL = os.getenv("MOODMENTOR_API_URL", "http://127.0.0.1:8000")
 TIMEOUT = 30
 MIX_COLORS = {"Positive": "#2E9E5B", "Neutral": "#9AA7C7", "Negative": "#E5675B"}
+FREQUENCY_OPTIONS = ["Not set", "Daily", "A few times a week", "Weekly", "Occasionally"]
+TIME_OPTIONS = ["Not set", "Morning", "Afternoon", "Evening", "Night", "No preference"]
 
 st.set_page_config(
     page_title="MoodMentor",
@@ -103,6 +105,12 @@ def api_overview():
 
 def api_me():
     return requests.get(f"{API_URL}/me", headers=auth_headers(), timeout=TIMEOUT)
+
+
+def api_update_profile(payload):
+    return requests.put(
+        f"{API_URL}/me/profile", json=payload, headers=auth_headers(), timeout=TIMEOUT
+    )
 
 
 def call_api(func, *args):
@@ -430,14 +438,63 @@ def page_journal():
     st.dataframe(table, hide_index=True, use_container_width=True)
 
 
+def _index(options, value):
+    return options.index(value) if value in options else 0
+
+
 def page_profile():
-    page_header("Your account", "My profile")
+    page_header("Your account", "My profile",
+                "Tell MoodMentor a little about you and how you like to journal.")
     me = call_api(api_me)
     if me is None:
         return
+
+    flash = st.session_state.pop("profile_flash", None)
+    if flash:
+        st.success(flash)
+
     with st.container(border=True):
-        st.markdown(f"**Username:** {me['username']}")
-        st.markdown(f"**Email:** {me['email']}")
+        st.markdown(f"### {me.get('full_name') or me['username']}")
+        st.caption(f"@{me['username']}  ·  {me['email']}")
+        if me.get("bio"):
+            st.write(me["bio"])
+
+    with st.container(border=True):
+        st.markdown("**Edit your details**")
+        with st.form("profile_form"):
+            full_name = st.text_input("Full name", value=me.get("full_name") or "", max_chars=100)
+            bio = st.text_area(
+                "About me", value=me.get("bio") or "", max_chars=500, height=110,
+                placeholder="A few words about you...",
+            )
+            goal = st.text_area(
+                "What I want from journaling", value=me.get("journaling_goal") or "",
+                max_chars=300, height=90,
+                placeholder="e.g. Notice my mood, feel calmer, build a daily habit",
+            )
+            c1, c2 = st.columns(2)
+            frequency = c1.selectbox(
+                "How often I want to write", FREQUENCY_OPTIONS,
+                index=_index(FREQUENCY_OPTIONS, me.get("journaling_frequency")),
+            )
+            best_time = c2.selectbox(
+                "Best time to write", TIME_OPTIONS,
+                index=_index(TIME_OPTIONS, me.get("preferred_time")),
+            )
+            saved = st.form_submit_button("Save changes", type="primary")
+
+    if saved:
+        payload = {
+            "full_name": full_name,
+            "bio": bio,
+            "journaling_goal": goal,
+            "journaling_frequency": "" if frequency == "Not set" else frequency,
+            "preferred_time": "" if best_time == "Not set" else best_time,
+        }
+        if call_api(api_update_profile, payload):
+            st.session_state["profile_flash"] = "Profile updated."
+            st.rerun()
+
     st.write("")
     st.button("Log out", on_click=logout_click)
 

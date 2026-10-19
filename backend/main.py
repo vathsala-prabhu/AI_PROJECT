@@ -3,12 +3,23 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from backend.auth.dependencies import get_current_user
+from backend.auth.profile import update_profile
 from backend.auth.security import create_access_token
 from backend.auth.service import authenticate_user, register_user
-from backend.db.crud import list_analyses, save_analysis
+from backend.db.crud import (
+    list_analyses,
+    overview_stats,
+    save_analysis,
+    save_csv_rows,
+)
 from backend.db.database import get_db
 from backend.db.models import User
-from backend.schemas import AnalyzeRequest, LoginRequest, RegisterRequest
+from backend.schemas import (
+    AnalyzeRequest,
+    LoginRequest,
+    ProfileUpdate,
+    RegisterRequest,
+)
 from backend.services.file_parser import (
     ALLOWED_EXTENSIONS,
     MAX_FILE_BYTES,
@@ -24,6 +35,20 @@ app = FastAPI(
     description="Milestone 1: text ingestion and baseline sentiment analysis.",
     version="0.1.0",
 )
+
+
+def user_dict(user: User) -> dict:
+    """The user data that is safe to send to the browser (never the password)."""
+    return {
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "full_name": user.full_name,
+        "bio": user.bio,
+        "journaling_goal": user.journaling_goal,
+        "journaling_frequency": user.journaling_frequency,
+        "preferred_time": user.preferred_time,
+    }
 
 
 @app.get("/")
@@ -107,12 +132,22 @@ def login(request: LoginRequest, db: Session = Depends(get_db)):
 
 @app.get("/me")
 def me(current_user: User = Depends(get_current_user)):
-    """Return the logged-in user. Requires a valid token."""
-    return {
-        "id": current_user.id,
-        "username": current_user.username,
-        "email": current_user.email,
-    }
+    """Return the logged-in user's account and profile. Requires a valid token."""
+    return user_dict(current_user)
+
+
+@app.put("/me/profile")
+def edit_profile(
+    request: ProfileUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Update the logged-in user's profile fields."""
+    try:
+        user = update_profile(db, current_user, request.model_dump())
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return user_dict(user)
 
 
 @app.post("/my/analyze")
@@ -129,6 +164,23 @@ def analyze_and_save(
     row = save_analysis(db, current_user.id, report)
     report["saved_id"] = row.id
     return report
+
+
+@app.post("/my/analyze-file")
+async def analyze_file_and_save(
+    file: UploadFile = File(...),
+    column: str | None = Form(None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Analyze an uploaded .txt/.csv and save the result(s) to the user's history."""
+    result = await analyze_file(file=file, column=column)  # raises 400 on bad input
+    if result["file_type"] == "txt":
+        save_analysis(db, current_user.id, result["report"], source="txt")
+        result["saved_entries"] = 1
+    else:
+        result["saved_entries"] = save_csv_rows(db, current_user.id, result["results"])
+    return result
 
 
 @app.get("/my/history")
@@ -151,3 +203,12 @@ def history(
         }
         for r in list_analyses(db, current_user.id)
     ]
+
+
+@app.get("/my/overview")
+def overview(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Dashboard numbers for the logged-in user."""
+    return overview_stats(db, current_user.id)
