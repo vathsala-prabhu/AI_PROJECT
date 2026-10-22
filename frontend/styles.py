@@ -106,9 +106,20 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 </style>
 """
 
+# Logged out: no sidebar on the public pages.
 HIDE_SIDEBAR = """
 <style>
 [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"], [data-testid="collapsedControl"] { display: none; }
+</style>
+"""
+
+# Logged in: force the sidebar open.
+SHOW_SIDEBAR = """
+<style>
+[data-testid="stSidebar"] {
+  display: flex !important; visibility: visible !important;
+  transform: none !important; min-width: 280px !important;
+}
 </style>
 """
 
@@ -132,8 +143,7 @@ FEATURE_CARDS = [
 
 def inject_css(hide_sidebar: bool = False):
     st.markdown(CSS, unsafe_allow_html=True)
-    if hide_sidebar:
-        st.markdown(HIDE_SIDEBAR, unsafe_allow_html=True)
+    st.markdown(HIDE_SIDEBAR if hide_sidebar else SHOW_SIDEBAR, unsafe_allow_html=True)
 
 
 def logo_html():
