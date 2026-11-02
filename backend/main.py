@@ -195,6 +195,7 @@ def history(
             "source": r.source,
             "text": r.input_text[:200],
             "label": r.label,
+            "emotion": r.emotion,
             "compound": r.compound,
             "positive": r.positive,
             "negative": r.negative,

@@ -42,6 +42,7 @@ class Analysis(Base):
     negative: Mapped[float] = mapped_column(Float)
     neutral: Mapped[float] = mapped_column(Float)
     label: Mapped[str] = mapped_column(String(10))
+    emotion: Mapped[str | None] = mapped_column(String(20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     user: Mapped["User"] = relationship(back_populates="analyses")

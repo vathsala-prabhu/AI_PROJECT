@@ -1,4 +1,4 @@
-"""MoodMentor Streamlit UI (Milestone 1). Talks to the FastAPI backend."""
+"""MoodMentor Streamlit UI. Talks to the FastAPI backend."""
 import json
 import os
 
@@ -17,8 +17,18 @@ from styles import (
 )
 
 API_URL = os.getenv("MOODMENTOR_API_URL", "http://127.0.0.1:8000")
-TIMEOUT = 30
+TIMEOUT = 120
 MIX_COLORS = {"Positive": "#2E9E5B", "Neutral": "#9AA7C7", "Negative": "#E5675B"}
+EMOTION_COLORS = {
+    "Joy": "#F5B93A", "Sadness": "#5B8CFF", "Anger": "#E5675B",
+    "Fear": "#9B7BE0", "Disgust": "#7FA650", "Surprise": "#F08BC0",
+    "Neutral": "#9AA7C7", "Calm": "#2E9E5B", "Mixed / unclear": "#C3CBE0",
+}
+EMOTION_ICONS = {
+    "Joy": "😊", "Sadness": "😢", "Anger": "😠", "Fear": "😨",
+    "Disgust": "🤢", "Surprise": "😲", "Neutral": "😐",
+    "Calm": "😌", "Mixed / unclear": "🤔",
+}
 FREQUENCY_OPTIONS = ["Not set", "Daily", "A few times a week", "Weekly", "Occasionally"]
 TIME_OPTIONS = ["Not set", "Morning", "Afternoon", "Evening", "Night", "No preference"]
 
@@ -165,12 +175,57 @@ def show_scores(sentiment):
         c3.metric("Negative", f"{sentiment['negative']:.3f}")
 
 
+def show_emotion(emotion):
+    with st.container(border=True):
+        eyebrow("Detected emotion")
+        icon = EMOTION_ICONS.get(emotion["label"], "🤔")
+        st.markdown(
+            f'<div class="big-label Neutral">{icon} {emotion["label"]}</div>',
+            unsafe_allow_html=True,
+        )
+        if emotion.get("engine") == "transformer":
+            top = ", ".join(f"{n} ({p:.0%})" for n, p in emotion["top"][:3])
+            st.caption("Closest specific emotions: " + top)
+            st.caption(f"Keyword baseline said: {emotion.get('baseline', '-')}")
+            st.caption("DistilBERT fine-tuned on GoEmotions. An estimate, not a diagnosis.")
+        else:
+            words = [w for ws in emotion.get("matched", {}).values() for w in ws]
+            if words:
+                st.caption("Based on: " + ", ".join(words))
+            else:
+                st.caption("No clear emotion words found.")
+            st.caption("A keyword estimate checked against VADER. Not a diagnosis.")
+
+
+def donut(counts, colors):
+    df = pd.DataFrame([{"label": k, "count": v} for k, v in counts.items() if v > 0])
+    st.vega_lite_chart(
+        df,
+        {
+            "mark": {"type": "arc", "innerRadius": 60},
+            "encoding": {
+                "theta": {"field": "count", "type": "quantitative"},
+                "color": {
+                    "field": "label",
+                    "type": "nominal",
+                    "scale": {"domain": list(colors), "range": list(colors.values())},
+                    "legend": {"title": None, "orient": "bottom"},
+                },
+            },
+            "height": 260,
+        },
+        use_container_width=True,
+    )
+
+
 def show_text_report(report):
     st.success(report["summary"])
     st.caption(
         f"{report['word_count']} words · {report['char_count']} characters · "
         f"generated {report['generated_at']}"
     )
+    if report.get("emotion"):
+        show_emotion(report["emotion"])
     show_scores(report["sentiment"])
 
     with st.expander("Preprocessing steps (demonstration)"):
@@ -211,7 +266,7 @@ def show_csv_report(data):
 
     st.markdown("**Score for every row**")
     table = pd.DataFrame(data["results"])[
-        ["row", "text", "label", "compound", "positive", "negative", "neutral"]
+        ["row", "text", "emotion", "label", "compound", "positive", "negative", "neutral"]
     ]
     st.dataframe(table, hide_index=True, use_container_width=True)
 
@@ -348,31 +403,15 @@ def page_overview():
             st.line_chart(rhythm, height=280)
     with right:
         with st.container(border=True):
-            st.markdown("**Your sentiment mix**")
-            st.caption("Share of Positive, Neutral and Negative entries.")
-            mix = pd.DataFrame(
-                [{"label": k, "count": v} for k, v in counts.items() if v > 0]
-            )
-            st.vega_lite_chart(
-                mix,
-                {
-                    "mark": {"type": "arc", "innerRadius": 60},
-                    "encoding": {
-                        "theta": {"field": "count", "type": "quantitative"},
-                        "color": {
-                            "field": "label",
-                            "type": "nominal",
-                            "scale": {
-                                "domain": list(MIX_COLORS),
-                                "range": list(MIX_COLORS.values()),
-                            },
-                            "legend": {"title": None, "orient": "bottom"},
-                        },
-                    },
-                    "height": 260,
-                },
-                use_container_width=True,
-            )
+            tab_e, tab_s = st.tabs(["Emotion mix", "Sentiment mix"])
+            with tab_e:
+                emotion_counts = data.get("emotion_counts", {})
+                if emotion_counts:
+                    donut(emotion_counts, EMOTION_COLORS)
+                else:
+                    st.caption("Analyze a new entry to see your emotions here.")
+            with tab_s:
+                donut(counts, MIX_COLORS)
     st.button("＋ New check-in", type="primary", on_click=go_to, args=("Analyze text",))
 
 
@@ -391,7 +430,8 @@ def page_analyze():
             )
             clicked = st.button("Analyze my text", type="primary", key="analyze_text_btn")
         if clicked:
-            report = call_api(api_analyze_text, text)
+            with st.spinner("Analyzing..."):
+                report = call_api(api_analyze_text, text)
             if report:
                 st.caption("✅ Saved to your journal.")
                 show_text_report(report)
@@ -402,7 +442,8 @@ def page_analyze():
             if uploaded is None:
                 st.warning("Please choose a file first.")
             else:
-                data = call_api(api_analyze_file, uploaded, None)
+                with st.spinner("Analyzing..."):
+                    data = call_api(api_analyze_file, uploaded, None)
                 if data:
                     st.caption("✅ Saved to your journal.")
                     show_text_report(data["report"])
@@ -418,7 +459,8 @@ def page_analyze():
             if uploaded is None:
                 st.warning("Please choose a file first.")
             else:
-                data = call_api(api_analyze_file, uploaded, column)
+                with st.spinner("Analyzing every row..."):
+                    data = call_api(api_analyze_file, uploaded, column)
                 if data:
                     st.caption(f"✅ {data['saved_entries']} rows saved to your journal.")
                     show_csv_report(data)
@@ -433,7 +475,8 @@ def page_journal():
         st.info("No saved entries yet. Analyze some text first.")
         return
     table = pd.DataFrame(rows)[
-        ["created_at", "source", "text", "label", "compound", "positive", "negative", "neutral"]
+        ["created_at", "source", "text", "emotion", "label",
+         "compound", "positive", "negative", "neutral"]
     ]
     st.dataframe(table, hide_index=True, use_container_width=True)
 

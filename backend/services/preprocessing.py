@@ -17,8 +17,11 @@ SPACES_RE = re.compile(r"\s+")
 
 @lru_cache(maxsize=1)
 def get_nlp():
-    """Load the spaCy model once and reuse it (loading is slow)."""
-    return spacy.load("en_core_web_sm")
+    """Load a spaCy model once and reuse it. Falls back to blank English if the package model is unavailable."""
+    try:
+        return spacy.load("en_core_web_sm")
+    except OSError:
+        return spacy.blank("en")
 
 
 def clean_text(text: str) -> str:

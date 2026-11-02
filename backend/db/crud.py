@@ -16,6 +16,7 @@ def save_analysis(db: Session, user_id: int, report: dict, source: str = "text")
         negative=s["negative"],
         neutral=s["neutral"],
         label=s["label"],
+        emotion=report.get("emotion", {}).get("label"),
     )
     db.add(row)
     db.commit()
@@ -35,6 +36,7 @@ def save_csv_rows(db: Session, user_id: int, results: list[dict]) -> int:
             negative=r["negative"],
             neutral=r["neutral"],
             label=r["label"],
+            emotion=r.get("emotion"),
         )
         for r in results
     ]
@@ -54,7 +56,7 @@ def list_analyses(db: Session, user_id: int, limit: int = 50) -> list[Analysis]:
 
 
 def overview_stats(db: Session, user_id: int, recent: int = 20) -> dict:
-    """Totals, label counts, average score and the latest scores (oldest first)."""
+    """Totals, label counts, emotion counts, average score and latest scores."""
     total = db.scalar(
         select(func.count(Analysis.id)).where(Analysis.user_id == user_id)
     ) or 0
@@ -70,12 +72,20 @@ def overview_stats(db: Session, user_id: int, recent: int = 20) -> dict:
     for label, n in label_rows:
         counts[label] = n
 
+    emotion_rows = db.execute(
+        select(Analysis.emotion, func.count(Analysis.id))
+        .where(Analysis.user_id == user_id, Analysis.emotion.is_not(None))
+        .group_by(Analysis.emotion)
+    ).all()
+    emotion_counts = {emotion: n for emotion, n in emotion_rows}
+
     latest = list_analyses(db, user_id, limit=recent)
     latest.reverse()  # oldest first, so the chart reads left to right
     return {
         "total": total,
         "average_compound": round(average, 4) if average is not None else None,
         "counts": counts,
+        "emotion_counts": emotion_counts,
         "recent": [
             {"compound": r.compound, "label": r.label, "created_at": r.created_at.isoformat()}
             for r in latest
