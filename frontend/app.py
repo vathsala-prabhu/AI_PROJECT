@@ -175,26 +175,59 @@ def show_scores(sentiment):
         c3.metric("Negative", f"{sentiment['negative']:.3f}")
 
 
+
 def show_emotion(emotion):
     with st.container(border=True):
         eyebrow("Detected emotion")
+
         icon = EMOTION_ICONS.get(emotion["label"], "🤔")
+
         st.markdown(
             f'<div class="big-label Neutral">{icon} {emotion["label"]}</div>',
             unsafe_allow_html=True,
         )
+
         if emotion.get("engine") == "transformer":
-            top = ", ".join(f"{n} ({p:.0%})" for n, p in emotion["top"][:3])
-            st.caption("Closest specific emotions: " + top)
-            st.caption(f"Keyword baseline said: {emotion.get('baseline', '-')}")
-            st.caption("DistilBERT fine-tuned on GoEmotions. An estimate, not a diagnosis.")
+            st.markdown("**Emotion confidence levels**")
+
+            for name, probability in emotion.get("top", [])[:5]:
+                percentage = max(0.0, min(float(probability), 1.0))
+
+                col1, col2 = st.columns([5, 1])
+
+                with col1:
+                    st.markdown(f"**{name.capitalize()}**")
+                    st.progress(percentage)
+
+                with col2:
+                    st.markdown(
+                        f"**{percentage:.1%}**"
+                    )
+
+            st.caption(
+                f"Keyword baseline said: {emotion.get('baseline', '-')}"
+            )
+            st.caption(
+                "DistilBERT fine-tuned on GoEmotions. "
+                "Scores represent model confidence estimates, not certainty."
+            )
+
         else:
-            words = [w for ws in emotion.get("matched", {}).values() for w in ws]
+            words = [
+                w
+                for ws in emotion.get("matched", {}).values()
+                for w in ws
+            ]
+
             if words:
                 st.caption("Based on: " + ", ".join(words))
             else:
                 st.caption("No clear emotion words found.")
-            st.caption("A keyword estimate checked against VADER. Not a diagnosis.")
+
+            st.caption(
+                "A keyword estimate checked against VADER. Not a diagnosis."
+            )
+
 
 
 def donut(counts, colors):
