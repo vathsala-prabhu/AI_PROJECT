@@ -1,85 +1,83 @@
 
-"""Transformer emotion engine: DistilBERT fine-tuned on GoEmotions."""
+"""Transformer emotion engine: DistilBERT fine-tuned on DAIR-AI Emotion."""
 
-import json
 import os
 from functools import lru_cache
 from pathlib import Path
 
-MODEL_DIR = Path(__file__).resolve().parents[1] / "models"
+import torch
+from transformers import (
+    AutoModelForSequenceClassification,
+    AutoTokenizer,
+)
 
-GROUPS = {
-    "joy": [
-        "admiration", "amusement", "approval", "caring", "desire",
-        "excitement", "gratitude", "joy", "love", "optimism",
-        "pride", "relief"
-    ],
-    "sadness": [
-        "sadness", "disappointment", "embarrassment", "grief", "remorse"
-    ],
-    "anger": [
-        "anger", "annoyance", "disapproval"
-    ],
-    "fear": [
-        "fear", "nervousness"
-    ],
-    "disgust": [
-        "disgust"
-    ],
-    "surprise": [
-        "surprise", "realization", "confusion", "curiosity"
-    ],
-    "neutral": [
-        "neutral"
-    ],
-}
+# backend/models/moodmentor_emotion/
+MODEL_DIR = (
+    Path(__file__).resolve().parents[1]
+    / "models"
+    / "moodmentor_emotion"
+)
+
+MAX_LENGTH = 128
+
+LABEL_NAMES = [
+    "sadness",
+    "joy",
+    "love",
+    "anger",
+    "fear",
+    "surprise",
+]
 
 
 def engine_enabled() -> bool:
-    return os.getenv("MOODMENTOR_EMOTION_ENGINE", "auto").lower() != "keyword"
+    """Check whether transformer emotion detection is enabled."""
+    return os.getenv(
+        "MOODMENTOR_EMOTION_ENGINE", "auto"
+    ).lower() != "keyword"
 
 
 @lru_cache(maxsize=1)
 def _load():
-    """Load the trained model and thresholds once."""
+    """Load the fine-tuned model and tokenizer once."""
 
     if not (MODEL_DIR / "config.json").exists():
         print(f"Emotion model not found at: {MODEL_DIR}")
         return None
 
-    from transformers import AutoModelForSequenceClassification, AutoTokenizer
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(str(MODEL_DIR))
 
-    tokenizer = AutoTokenizer.from_pretrained(str(MODEL_DIR))
-
-    model = AutoModelForSequenceClassification.from_pretrained(
-        str(MODEL_DIR)
-    ).eval()
-
-    names = [
-        model.config.id2label[i]
-        for i in range(model.config.num_labels)
-    ]
-
-    thresholds_path = MODEL_DIR / "thresholds.json"
-    thresholds = json.loads(thresholds_path.read_text())
-
-    # Group thresholds are optional.
-    group_thresholds_path = MODEL_DIR / "group_thresholds.json"
-
-    if group_thresholds_path.exists():
-        group_thresholds = json.loads(
-            group_thresholds_path.read_text()
+        model = AutoModelForSequenceClassification.from_pretrained(
+            str(MODEL_DIR)
         )
-    else:
-        group_thresholds = {}
 
-    return tokenizer, model, names, thresholds, group_thresholds
+        device = torch.device(
+            "cuda" if torch.cuda.is_available() else "cpu"
+        )
+
+        model.to(device)
+        model.eval()
+
+        names = [
+            model.config.id2label.get(i, LABEL_NAMES[i])
+            for i in range(model.config.num_labels)
+        ]
+
+        return tokenizer, model, names, device
+
+    except Exception as exc:
+        print(f"Error loading emotion model: {exc}")
+        return None
 
 
 def predict(text):
-    """Return emotion predictions using the fine-tuned DistilBERT model."""
+    """Predict one of six emotions using DAIR-AI DistilBERT."""
 
     if not engine_enabled():
+        return None
+
+    if not text or not text.strip():
         return None
 
     loaded = _load()
@@ -87,60 +85,57 @@ def predict(text):
     if loaded is None:
         return None
 
-    import torch
-
-    tokenizer, model, names, thresholds, group_thresholds = loaded
+    tokenizer, model, names, device = loaded
 
     inputs = tokenizer(
         text,
         return_tensors="pt",
         truncation=True,
-        max_length=128
+        max_length=MAX_LENGTH,
+        padding=True,
     )
 
+    inputs = {
+        key: value.to(device)
+        for key, value in inputs.items()
+    }
+
     with torch.no_grad():
-        probs = torch.sigmoid(
-            model(**inputs).logits
-        )[0].cpu().numpy()
+        logits = model(**inputs).logits
+        probabilities = torch.softmax(logits, dim=-1)[0]
 
-    # Fine-grained GoEmotions predictions.
-    fine = {
-        name: float(probability)
-        for name, probability in zip(names, probs)
+    predicted_id = int(torch.argmax(probabilities).item())
+
+    predicted_emotion = names[predicted_id].lower()
+
+    scores = {
+        name.capitalize(): round(
+            float(probabilities[i].item()), 4
+        )
+        for i, name in enumerate(names)
     }
 
-    # Combine fine-grained emotions into broader groups.
-    groups = {
-        group: max(fine[emotion] for emotion in members)
-        for group, members in GROUPS.items()
-    }
-
-    # Select the group with the highest confidence score.
-    highest_group = max(groups, key=groups.get)
-    label = highest_group.capitalize()
+    top_predictions = sorted(
+        [
+            (name.lower(), float(probabilities[i].item()))
+            for i, name in enumerate(names)
+        ],
+        key=lambda item: item[1],
+        reverse=True,
+    )
 
     return {
         "engine": "transformer",
-        "label": label,
+        "label": predicted_emotion.capitalize(),
 
-        "scores": {
-            group.capitalize(): round(score, 3)
-            for group, score in groups.items()
-        },
+        "scores": scores,
 
         "top": [
-            [name, round(probability, 3)]
-            for name, probability in sorted(
-                fine.items(),
-                key=lambda item: -item[1]
-            )[:5]
+            [name, round(score, 4)]
+            for name, score in top_predictions[:5]
         ],
 
-        "detected": [
-            name
-            for name, probability in fine.items()
-            if probability >= thresholds.get(name, 0.5)
-        ],
+        "detected": [predicted_emotion],
 
         "matched": {},
     }
