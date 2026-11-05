@@ -1,5 +1,5 @@
 
-"""Lightweight emotion detection: keyword rules + VADER sanity check."""
+"""Lightweight multi-label emotion detection: keyword rules + VADER sanity check."""
 
 from backend.services.preprocessing import clean_text, get_nlp
 
@@ -71,33 +71,34 @@ WORD_TO_EMOTION = {
 
 
 def detect_emotion(text, compound: float) -> dict:
-    """Return the main emotion, emotion scores and matched words."""
+    """Return keyword-based emotion predictions and matched words."""
 
     doc = get_nlp()(clean_text(text or ""))
-    tokens = [t for t in doc if not t.is_space]
+    tokens = [token for token in doc if not token.is_space]
 
     scores = {emotion: 0 for emotion in EMOTIONS}
     matched = {emotion: [] for emotion in EMOTIONS}
 
-    for i, tok in enumerate(tokens):
+    for i, token in enumerate(tokens):
 
         emotion = (
-            WORD_TO_EMOTION.get(tok.text.lower())
-            or WORD_TO_EMOTION.get(tok.lemma_.lower())
+            WORD_TO_EMOTION.get(token.text.lower())
+            or WORD_TO_EMOTION.get(token.lemma_.lower())
         )
 
         if not emotion:
             continue
 
+        # Check for negation in the preceding words.
         before = tokens[max(0, i - NEGATION_WINDOW):i]
 
         if any(t.text.lower() in NEGATORS for t in before):
             continue
 
         scores[emotion] += 1
-        matched[emotion].append(tok.text.lower())
+        matched[emotion].append(token.text.lower())
 
-    # VADER sentiment sanity check.
+    # Preserve the existing VADER sanity check for the fallback.
     if compound >= 0.05:
         blocked = NEGATIVE_EMOTIONS
     elif compound <= -0.05:
@@ -109,6 +110,14 @@ def detect_emotion(text, compound: float) -> dict:
         scores[emotion] = 0
         matched[emotion] = []
 
+    # Identify every emotion with a positive keyword score.
+    detected = [
+        emotion
+        for emotion in EMOTIONS
+        if scores[emotion] > 0
+    ]
+
+    # Keep the existing primary-label behaviour for compatibility.
     top = max(scores.values())
 
     winners = [
@@ -125,6 +134,7 @@ def detect_emotion(text, compound: float) -> dict:
 
     return {
         "label": label,
+        "detected": detected,
         "scores": scores,
         "matched": {
             emotion: words

@@ -1,5 +1,5 @@
 
-"""Transformer emotion engine: DistilBERT fine-tuned on DAIR-AI Emotion."""
+"""Multi-label transformer emotion engine: DistilBERT fine-tuned on DAIR-AI Emotion."""
 
 import os
 from functools import lru_cache
@@ -11,7 +11,6 @@ from transformers import (
     AutoTokenizer,
 )
 
-# backend/models/moodmentor_emotion/
 MODEL_DIR = (
     Path(__file__).resolve().parents[1]
     / "models"
@@ -29,6 +28,8 @@ LABEL_NAMES = [
     "surprise",
 ]
 
+DEFAULT_THRESHOLD = 0.30
+
 
 def engine_enabled() -> bool:
     """Check whether transformer emotion detection is enabled."""
@@ -37,9 +38,28 @@ def engine_enabled() -> bool:
     ).lower() != "keyword"
 
 
+def get_threshold() -> float:
+    """Read and validate the emotion detection threshold."""
+    try:
+        threshold = float(
+            os.getenv(
+                "MOODMENTOR_EMOTION_THRESHOLD",
+                str(DEFAULT_THRESHOLD),
+            )
+        )
+
+        if 0.0 <= threshold <= 1.0:
+            return threshold
+
+    except (ValueError, TypeError):
+        pass
+
+    return DEFAULT_THRESHOLD
+
+
 @lru_cache(maxsize=1)
 def _load():
-    """Load the fine-tuned model and tokenizer once."""
+    """Load the multi-label model and tokenizer once."""
 
     if not (MODEL_DIR / "config.json").exists():
         print(f"Emotion model not found at: {MODEL_DIR}")
@@ -59,25 +79,32 @@ def _load():
         model.to(device)
         model.eval()
 
-        names = [
-            model.config.id2label.get(i, LABEL_NAMES[i])
-            for i in range(model.config.num_labels)
-        ]
+        if model.config.num_labels != len(LABEL_NAMES):
+            raise ValueError(
+                f"Expected {len(LABEL_NAMES)} emotion outputs, "
+                f"but model has {model.config.num_labels}."
+            )
 
-        return tokenizer, model, names, device
+        if model.config.problem_type != "multi_label_classification":
+            print(
+                "Warning: Model config does not specify "
+                "multi_label_classification."
+            )
+
+        return tokenizer, model, LABEL_NAMES.copy(), device
 
     except Exception as exc:
         print(f"Error loading emotion model: {exc}")
         return None
 
 
-def predict(text):
-    """Predict one of six emotions using DAIR-AI DistilBERT."""
+def predict(text: str):
+    """Predict multiple emotions using sigmoid probabilities."""
 
     if not engine_enabled():
         return None
 
-    if not text or not text.strip():
+    if not isinstance(text, str) or not text.strip():
         return None
 
     loaded = _load()
@@ -86,6 +113,7 @@ def predict(text):
         return None
 
     tokenizer, model, names, device = loaded
+    threshold = get_threshold()
 
     inputs = tokenizer(
         text,
@@ -102,11 +130,7 @@ def predict(text):
 
     with torch.no_grad():
         logits = model(**inputs).logits
-        probabilities = torch.softmax(logits, dim=-1)[0]
-
-    predicted_id = int(torch.argmax(probabilities).item())
-
-    predicted_emotion = names[predicted_id].lower()
+        probabilities = torch.sigmoid(logits)[0]
 
     scores = {
         name.capitalize(): round(
@@ -117,25 +141,33 @@ def predict(text):
 
     top_predictions = sorted(
         [
-            (name.lower(), float(probabilities[i].item()))
+            (name, float(probabilities[i].item()))
             for i, name in enumerate(names)
         ],
         key=lambda item: item[1],
         reverse=True,
     )
 
+    detected = [
+        name.capitalize()
+        for name, score in top_predictions
+        if score >= threshold
+    ]
+
+    if not detected:
+        detected = [top_predictions[0][0].capitalize()]
+
+    primary_emotion = top_predictions[0][0].capitalize()
+
     return {
         "engine": "transformer",
-        "label": predicted_emotion.capitalize(),
-
+        "label": primary_emotion,
         "scores": scores,
-
         "top": [
-            [name, round(score, 4)]
-            for name, score in top_predictions[:5]
+            [name.lower(), round(score, 4)]
+            for name, score in top_predictions
         ],
-
-        "detected": [predicted_emotion],
-
+        "detected": detected,
         "matched": {},
+        "threshold": threshold,
     }

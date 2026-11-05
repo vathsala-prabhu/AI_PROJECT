@@ -51,13 +51,27 @@ def test_tie_is_unclear():
     assert label("I feel sad and angry", -0.5) == UNCLEAR
 
 
-def test_report_contains_emotion():
+def test_report_contains_emotion(monkeypatch):
+    # Test keyword fallback independently of the transformer.
+    monkeypatch.setattr(
+        "backend.services.report.transformer_emotion",
+        lambda text: None,
+    )
+
     report = build_report("I am so happy and excited today!")
+
     assert "emotion" in report
     assert report["emotion"]["label"] == "Joy"
+    assert "detected" in report["emotion"]
 
 
-def test_csv_rows_have_emotion():
+def test_csv_rows_have_emotion(monkeypatch):
+    # Make CSV tests deterministic by using keyword fallback.
+    monkeypatch.setattr(
+        "backend.services.report.transformer_emotion",
+        lambda text: None,
+    )
+
     rows = [
         (2, "I am happy and excited"),
         (3, "I hate this, I am furious"),
@@ -72,3 +86,6 @@ def test_csv_rows_have_emotion():
         "Joy": 1,
         "Anger": 1,
     }
+
+    assert data["results"][0]["detected_emotions"]
+    assert data["results"][1]["detected_emotions"]

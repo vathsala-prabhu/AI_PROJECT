@@ -69,3 +69,24 @@ def test_report_contains_emotion_engine():
         "transformer",
         "keyword",
     }
+
+def test_report_contains_multiple_emotion_fields():
+    report = build_report(
+        "I am happy about my new job but nervous about the responsibilities."
+    )
+
+    emotion = report["emotion"]
+
+    assert "detected" in emotion
+    assert isinstance(emotion["detected"], list)
+
+    assert "scores" in emotion
+    assert set(emotion["scores"].keys()) == VALID_EMOTIONS
+
+
+def test_report_summary_contains_detected_emotions():
+    report = build_report(
+        "I am excited about my new opportunity."
+    )
+
+    assert "Detected emotions:" in report["summary"]

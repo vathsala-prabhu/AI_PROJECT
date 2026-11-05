@@ -1,48 +1,74 @@
 
-"""VADER sentiment analysis using the highest sentiment proportion."""
+"""VADER sentiment analysis using compound score thresholds."""
 
 from functools import lru_cache
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 
 
 @lru_cache(maxsize=1)
-def get_analyzer() -> SentimentIntensityAnalyzer:
+def get_analyzer():
     return SentimentIntensityAnalyzer()
 
 
-def classify_sentiment(scores: dict) -> str:
-    """Choose the sentiment with the highest VADER proportion."""
+def classify_sentiment(scores):
+    """
+    Classify sentiment.
 
-    values = {
-        "Positive": scores["pos"],
-        "Neutral": scores["neu"],
-        "Negative": scores["neg"],
-    }
+    Numeric input or a dictionary with compound:
+        Uses VADER compound thresholds.
 
-    highest = max(values.values())
+    Dictionary with only positive, neutral and negative proportions:
+        Uses the highest proportion. Neutral wins ties.
+    """
 
-    # Prefer Neutral if there is a tie.
-    if values["Neutral"] == highest:
-        return "Neutral"
+    if isinstance(scores, dict):
 
-    if values["Positive"] == highest:
+        if "compound" in scores:
+            compound = scores["compound"]
+
+        else:
+            positive = scores.get("pos", scores.get("positive", 0))
+            neutral = scores.get("neu", scores.get("neutral", 0))
+            negative = scores.get("neg", scores.get("negative", 0))
+
+            values = {
+                "Positive": positive,
+                "Neutral": neutral,
+                "Negative": negative,
+            }
+
+            highest = max(values.values())
+
+            if neutral == highest:
+                return "Neutral"
+            elif positive == highest:
+                return "Positive"
+            else:
+                return "Negative"
+
+    else:
+        compound = scores
+
+    if compound >= 0.05:
         return "Positive"
-
-    return "Negative"
+    elif compound <= -0.05:
+        return "Negative"
+    else:
+        return "Neutral"
 
 
 def analyze_sentiment(text: str) -> dict:
+    """Analyze text using VADER."""
+
     if not isinstance(text, str) or not text.strip():
         raise ValueError("Text must be a non-empty string.")
 
     scores = get_analyzer().polarity_scores(text)
-
-    label = classify_sentiment(scores)
 
     return {
         "compound": scores["compound"],
         "positive": scores["pos"],
         "negative": scores["neg"],
         "neutral": scores["neu"],
-        "label": label,
+        "label": classify_sentiment(scores["compound"]),
     }
